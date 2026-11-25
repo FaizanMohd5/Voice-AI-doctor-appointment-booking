@@ -1,0 +1,43 @@
+# Deliberately local-only implementation notes
+/docs/ignore/
+
+# Local secrets and environment configuration
+.env
+.env.*
+!.env.example
+.envrc
+*.pem
+*.p12
+
+# Python environments, bytecode, and test/lint caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Node.js dependencies and generated frontend output
+node_modules/
+dist/
+build/
+.next/
+out/
+
+# Local databases and logs
+/backend/data/state.json
+*.sqlite
+*.sqlite3
+*.db
+*.log
+
+# Operating-system files
+.DS_Store
+Thumbs.db
