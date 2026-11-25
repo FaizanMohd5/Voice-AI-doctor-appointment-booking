@@ -2,50 +2,73 @@
 
 ## Overview
 
-A browser-based voice assistant for checking doctor availability, booking appointments, and cancelling appointments. The planned voice pipeline uses Pipecat (Python), ElevenLabs for speech-to-text and text-to-speech, and Gemini as the selected LLM.
+A Pipecat voice assistant for checking doctor availability, booking appointments, and cancelling appointments. The current pipeline uses Gemini for tool selection and conversation, and ElevenLabs for realtime speech-to-text and text-to-speech. Clinic records are stored in JSON; Google Calendar is not required.
 
-The caller identifies themself only by the phone number they speak. The assistant must read the number back and get confirmation before booking or cancelling. A dashboard will start/end calls, show the live transcript, and display doctors, available slots, and appointments.
+The appointment domain and tool adapter are provider-neutral. A per-call confirmation gate requires the caller to hear the phone number and target appointment read back, then give a clear affirmative before a mutation can happen.
 
 ## Project status
 
-The first domain/data slice is implemented: doctor, specialty, slot, and appointment models; availability, booking, and cancellation rules; JSON persistence; and focused tests. The Pipecat pipeline, Gemini integration, and dashboard have not been implemented yet.
+- Implemented: JSON-backed doctor/specialty/slot/appointment domain, provider-neutral appointment tools, and an argument-driven manual CLI.
+- Implemented: Pipecat SmallWebRTC voice pipeline using Gemini and ElevenLabs, with confirmation state scoped to each call.
+- Not implemented yet: the custom React dashboard. Pipecat's local development client is only for testing microphone/audio connectivity.
+- Not production-hardened: JSON persistence is intended for a single-process demo, not multiple workers or concurrent deployment.
 
-## Run the implemented slice
+## Setup (Windows PowerShell)
 
-Requires Python 3.10+ and no third-party packages.
-
-From the repository root, list the sample clinic data and available slots:
-
-```powershell
-python -m backend.app.main
-```
-
-Filter the displayed slots by clinic date, doctor ID, or specialty ID:
+Use Python 3.11 or later. These commands use Python 3.12:
 
 ```powershell
-python -m backend.app.main --date 2026-12-01
-python -m backend.app.main --doctor doctor-101
-python -m backend.app.main --specialty cardiology
+py -3.12 -m venv .venv
+.\.venv\Scripts\python -m pip install --upgrade pip
+.\.venv\Scripts\python -m pip install -e .
+Copy-Item .env.example .env
 ```
 
-Run the domain and JSON repository tests:
+Edit `.env` and set your own `GOOGLE_API_KEY`, `ELEVENLABS_API_KEY`, and `ELEVENLABS_VOICE_ID`. The app reads local environment variables or `.env`; do not commit real credentials. The non-voice CLI does not need provider credentials.
+
+## Run and manually test
+
+Preview the sample clinic records and available slots:
 
 ```powershell
-python -m unittest discover -s backend\tests -t . -v
+.\.venv\Scripts\python -m backend.app.main
 ```
 
-This is a read-only command-line view of the implemented domain/data layer, not yet the complete voice or web application. There is no Google Calendar integration; the assignment allows local mock data, and this prototype uses JSON.
+Check availability, optionally filtered by doctor, specialty, or clinic date:
 
-## Recommended build order
+```powershell
+.\.venv\Scripts\python -m backend.app.main availability --doctor doctor-101 --date 2026-12-01
+.\.venv\Scripts\python -m backend.app.main availability --specialty cardiology
+```
 
-1. Connect the existing appointment services to the required Pipecat tools.
-2. Add browser audio transport, ElevenLabs STT/TTS, and Gemini; verify complete booking and cancellation conversations.
-3. Build the dashboard as a thin client after the core voice workflow is reliable. React is a suitable choice, but the backend should not depend on it.
-4. Add optional assignment bonus features only after the required flow works.
+Book and cancel commands use the same tool adapter and confirmation gate as the voice pipeline. They print a read-back and require an interactive, clear affirmative; there is no `--yes` bypass:
 
-## Simplest starting structure
+```powershell
+.\.venv\Scripts\python -m backend.app.main book --slot-id slot-201 --phone-number "+91 98765 43210"
+.\.venv\Scripts\python -m backend.app.main cancel --phone-number "+91 98765 43210"
+```
 
-Keep the first version small and split files by responsibility rather than introducing extra layers or frameworks:
+Cancellation prints the matching appointment choices if more than one exists. Select one by rerunning with `--appointment-id`.
+
+## Run the voice pipeline
+
+```powershell
+.\.venv\Scripts\python -m backend.app.pipeline -t webrtc
+```
+
+Open the Pipecat development client at `http://localhost:7860/client`, allow microphone access, and connect. A live voice session requires valid Google and ElevenLabs credentials. The built-in client validates the voice pipeline but is not the eventual product dashboard.
+
+## Tests
+
+Run the domain, tool, CLI, and configuration tests from the repository root:
+
+```powershell
+.\.venv\Scripts\python -m unittest discover -s backend\tests -t . -v
+```
+
+These tests do not make paid provider calls. They verify the app-side logic, not the quality of live STT, Gemini responses, or TTS.
+
+## Structure and next steps
 
 ```text
 backend/
@@ -53,42 +76,17 @@ backend/
     models.py                 # Doctor, specialty, slot, and appointment records
     appointment_service.py    # Availability, booking, cancellation rules
     json_store.py             # Repository boundary and JSON-backed implementation
-    main.py                   # Read-only CLI preview of clinic data
-    tools.py                  # Pipecat function-tool adapters (next)
-    pipeline.py               # Pipecat voice pipeline (later)
+    config.py                 # Environment and local settings
+    tools.py                  # Provider-neutral tool schemas and handlers
+    main.py                   # Read-only preview and interactive manual tool tester
+    pipeline.py               # Pipecat, Gemini, ElevenLabs, and browser audio
   data/
-    seed.json                 # Tracked sample data; remains unchanged at runtime
+    seed.json                 # Tracked sample data
     state.json                # Generated mutable state; ignored by Git
-  tests/
-    test_appointment_service.py
+  tests/                      # Domain, tool, CLI, and configuration tests
+docs/
+  architecture-and-build-guide.md
+  ignore/                     # Local-only implementation explanations (Git-ignored)
 ```
 
-Run the domain tests from the repository root with:
-
-```powershell
-python -m unittest discover -s backend\tests -t . -v
-```
-
-## Initial data decisions
-
-- Use JSON seed data and a small repository interface for the local, single-process prototype. Runtime mutations are written to ignored `backend/data/state.json`; the tracked seed remains unchanged. Keep appointment rules in `appointment_service.py`, not in Pipecat prompts or JSON file handling.
-- Represent doctors and specialties by stable IDs; slots reference doctor IDs and use timestamps with explicit time zones.
-- Pick one clinic time zone in configuration. Ask for clarification rather than silently interpreting an ambiguous date or time.
-- Recheck slot availability when booking and only report success after the JSON write succeeds. Treat a simultaneous multi-process deployment as out of scope for this first storage choice; move to SQLite or a database if concurrent callers or stronger durability are needed.
-- Keep secrets in local environment files. Commit `.env.example` with placeholder setting names, never real API keys.
-- Gemini is selected, but no Gemini credential is needed until the LLM integration is implemented.
-
-## Planned request flow
-
-```text
-Browser audio
-    -> Pipecat session
-    -> STT -> conversation/LLM
-    -> appointment tool -> domain service -> JSON repository
-    -> LLM response -> TTS -> browser audio
-
-Dashboard <- call state and transcript events
-Dashboard <- doctors, slots, and appointment data
-```
-
-The JSON repository is the source of truth for appointment outcomes. The LLM selects and explains actions; it does not invent availability or decide that a write succeeded.
+Build the custom dashboard as a later, thin client: it should display call state/transcript and clinic data without implementing appointment rules itself. For the architecture, data flow, component responsibilities, and fallback paths, see [docs/architecture-and-build-guide.md](docs/architecture-and-build-guide.md).

@@ -85,6 +85,14 @@ class AppointmentService:
             data = self._repository.load()
             return tuple(sorted(data.doctors.values(), key=lambda item: item.name.casefold()))
 
+    def get_slot(self, slot_id: str) -> Slot:
+        with self._lock:
+            data = self._repository.load()
+            slot = data.slots.get(slot_id)
+            if slot is None:
+                raise SlotNotFoundError(f"Slot {slot_id} was not found")
+            return slot
+
     def find_available_slots(
         self,
         doctor_id: str | None = None,
@@ -129,7 +137,7 @@ class AppointmentService:
     def find_active_appointments_for_phone(
         self, phone_number: str
     ) -> tuple[Appointment, ...]:
-        normalized_phone = self._normalize_phone(phone_number)
+        normalized_phone = self.normalize_phone_number(phone_number)
         with self._lock:
             data = self._repository.load()
             matches = [
@@ -148,7 +156,7 @@ class AppointmentService:
         phone_number: str,
         confirmation: ActionConfirmation | None,
     ) -> Appointment:
-        normalized_phone = self._normalize_phone(phone_number)
+        normalized_phone = self.normalize_phone_number(phone_number)
         with self._lock:
             data = self._repository.load()
             slot = data.slots.get(slot_id)
@@ -179,7 +187,7 @@ class AppointmentService:
         phone_number: str,
         confirmation: ActionConfirmation | None,
     ) -> Appointment:
-        normalized_phone = self._normalize_phone(phone_number)
+        normalized_phone = self.normalize_phone_number(phone_number)
         with self._lock:
             data = self._repository.load()
             self._require_confirmation(
@@ -211,7 +219,7 @@ class AppointmentService:
             return cancelled
 
     @staticmethod
-    def _normalize_phone(phone_number: str) -> str:
+    def normalize_phone_number(phone_number: str) -> str:
         allowed_characters = set("0123456789+ -().")
         candidate = phone_number.strip()
         if (
@@ -239,7 +247,7 @@ class AppointmentService:
         if confirmation is None:
             raise ConfirmationRequiredError("Caller confirmation is required")
         try:
-            confirmation_phone = cls._normalize_phone(confirmation.phone_number)
+            confirmation_phone = cls.normalize_phone_number(confirmation.phone_number)
         except InvalidPhoneNumberError as exc:
             raise ConfirmationMismatchError(
                 "Confirmation does not match the requested action"

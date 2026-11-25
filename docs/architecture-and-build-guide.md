@@ -117,8 +117,8 @@ Keep the data/domain tests and tool tests runnable without calling paid or netwo
 
 | Component | Input → output | Keep this responsibility here |
 | --- | --- | --- |
-| Browser transport | Browser microphone audio → pipeline audio frames; pipeline audio/events → browser | Connection lifecycle, audio framing, and transport-level errors. Do not book appointments in transport handlers. |
-| Optional VAD | Audio frames → speech/start/stop boundaries or filtered frames | Improve turn detection or reduce unnecessary STT work. It must be possible to disable it without changing business logic. |
+| Browser transport | Browser microphone audio → pipeline audio frames; pipeline audio/events → browser | The current local development path uses Pipecat SmallWebRTC. Connection lifecycle, audio framing, and transport-level errors stay outside appointment rules. |
+| VAD | Audio frames → speech/start/stop boundaries | The current pipeline uses Silero VAD for caller-turn aggregation and VAD-based ElevenLabs realtime STT commits. It can be tuned or replaced without changing appointment logic. |
 | ElevenLabs STT | Caller audio → recognized text | Transcription only. Treat uncertain or empty transcription as something to clarify, not as a reliable phone number or consent. |
 | Conversation context | Current turn + bounded session state → LLM input | Track the selected doctor/slot and confirmation state for this call. Do not use prior calls or caller-ID as identity. |
 | LLM | Context → response or structured function call | Converse naturally and choose among real tool results. It must not invent doctors, availability, booking IDs, or successful mutations. |
@@ -128,6 +128,8 @@ Keep the data/domain tests and tool tests runnable without calling paid or netwo
 | Browser event client | Session events → visible status/transcript/data refresh | Render session state and refresh lists from the same authoritative backend data. It must not infer a booking from an LLM sentence alone. |
 
 Use the Pipecat pipeline for streaming and turn orchestration. Keep provider-specific setup behind small adapters/configuration so a provider can later be swapped without rewriting tool or appointment rules.
+
+The initial implementation registers three direct Python function tools in Gemini's `LLMContext`. Each callback forwards only validated arguments to the provider-neutral `AppointmentToolAdapter`; the adapter remains the boundary for domain rules and structured results. A fresh repository service and confirmation state are created per browser call. Assistant-turn and caller-turn aggregator events connect delivered read-backs and caller transcripts to that state. Disconnect clears it.
 
 ## 6. Appointment tools and conversation rules
 
@@ -241,44 +243,66 @@ These are not required for the first working submission. Add them as independent
 
 ## 11. Configuration and local setup checklist
 
-When implementing the application, keep credentials outside source control. Add a local environment file from a checked-in `.env.example`, and document the selected provider/model and exact run commands after the repository's backend and frontend tooling have been chosen.
+The checked-in `.env.example` lists the actual local settings. Copy it to `.env` and add credentials locally. `.env` is ignored; the example contains empty secret fields and remains trackable.
 
-Plan for configuration equivalent to:
+- `GOOGLE_API_KEY`, `GEMINI_MODEL`
+- `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_STT_MODEL`, `ELEVENLABS_TTS_MODEL`
+- `CLINIC_TIMEZONE` (IANA timezone, defaults to `Asia/Kolkata`)
+- Pipecat's local WebRTC runner owns the development server/port configuration.
 
-- ElevenLabs API credential and selected STT/TTS model IDs.
-- Selected LLM provider, model ID, and its credential (Gemini if chosen).
-- Pipeline/session host and port.
-- JSON seed-data path or repository location.
-- Optional VAD enablement.
-
-Validate required configuration at startup and report which setting is missing without printing secret values. Never commit API keys.
+Voice startup validates required setting names and reports missing variables without echoing credential values. The manual CLI and domain tests do not require provider credentials.
 
 ## 12. Running the current implementation
 
-The current repository implements the appointment domain/data slice only. It is not yet a running voice agent or browser dashboard. Google Calendar is not required by the assignment: doctor, specialty, and slot data may be mocked in memory, JSON, or SQLite. This prototype uses JSON.
+The repository includes the appointment domain, tool adapter, manual CLI, and an initial Pipecat voice pipeline. The custom React dashboard is still a later milestone. The Pipecat development client is available for exercising browser audio. Google Calendar is not required; this prototype uses JSON as permitted by the assignment.
 
-Requirements: Python 3.10 or later; the current domain/data slice uses only the Python standard library.
-
-From the repository root, display the sample specialties, doctors, and available slots:
+Requirements: Python 3.11 or later. On Windows, create the environment and install the project from the repository root:
 
 ```powershell
-python -m backend.app.main
+py -3.12 -m venv .venv
+.\.venv\Scripts\python -m pip install -e .
+Copy-Item .env.example .env
 ```
 
-Optional filters:
+Set `GOOGLE_API_KEY`, `ELEVENLABS_API_KEY`, and `ELEVENLABS_VOICE_ID` in the local `.env` file to make voice calls. To preview clinic data or filter availability (no provider credentials needed):
 
 ```powershell
-python -m backend.app.main --date 2026-12-01
-python -m backend.app.main --doctor doctor-101
-python -m backend.app.main --specialty cardiology
+.\.venv\Scripts\python -m backend.app.main
+.\.venv\Scripts\python -m backend.app.main availability --date 2026-12-01 --doctor doctor-101
+.\.venv\Scripts\python -m backend.app.main availability --specialty cardiology
 ```
 
-The sample times use the fixed UTC+05:30 clinic timezone. Date filtering interprets the requested date in that timezone. To restore the original sample after local booking data has been generated, remove only `backend/data/state.json`; the next run will load `backend/data/seed.json`.
-
-Run the domain and repository tests:
+Book/cancel can be exercised interactively with the same per-call confirmation gate:
 
 ```powershell
-python -m unittest discover -s backend\tests -t . -v
+.\.venv\Scripts\python -m backend.app.main book --slot-id slot-201 --phone-number "+91 98765 43210"
+.\.venv\Scripts\python -m backend.app.main cancel --phone-number "+91 98765 43210"
 ```
 
-The CLI is intentionally read-only; booking and cancellation are exposed through the service and covered by tests, but no interactive command-line, Pipecat, Gemini, or web interface exists yet. The next implementation step is the Pipecat tool adapter and its caller-confirmation conversation flow.
+Run the local browser voice pipeline and open its Pipecat client:
+
+```powershell
+.\.venv\Scripts\python -m backend.app.pipeline -t webrtc
+```
+
+Open `http://localhost:7860/client`, allow microphone access, and connect. This development UI is not the eventual custom dashboard.
+
+The sample timestamps are timezone-aware; date filtering interprets a requested date in the configured clinic timezone. Runtime changes are stored in ignored `backend/data/state.json`. To restore the original sample, remove that specific file; the next run will load `backend/data/seed.json`.
+
+Run all domain, tool, CLI, and configuration tests (these do not make provider calls):
+
+```powershell
+.\.venv\Scripts\python -m unittest discover -s backend\tests -t . -v
+```
+
+## 13. Appointment tool contracts
+
+The provider-neutral tool adapter is implemented in `backend/app/tools.py`; `backend/app/pipeline.py` registers availability, booking, and cancellation as direct function tools with the selected Gemini service. Each handler routes into `AppointmentToolAdapter.execute` and returns its structured result to the LLM context.
+
+The booking/cancellation schemas deliberately do not accept `confirmed`, `confirmation`, or another model-controlled consent field. On the first valid mutation request, the adapter returns a `confirmation_required` result containing the exact selected target and phone number to read back. The per-call `CallConfirmationState` only authorizes the action after the caller turn is a conservative exact affirmative (for example “yes”, “correct”, or “go ahead”). The authorization is bound to the action, target, and normalized phone number; it is consumed once and cleared on mismatched, unrelated, malformed, or session-ending events.
+
+For cancellation, the spoken phone number is used to find active appointments. If there are multiple matches, the tool returns a selection list and does not choose one. After the caller selects a specific appointment, it requests confirmation for that appointment and number. The tool reports success only after the domain service returns from a persisted mutation; expected domain and repository failures have explicit safe error codes.
+
+The current Pipecat assistant-turn handler marks a prompt presented only when the aggregated assistant text includes the expected spoken phone number, target doctor's name, and a question after those read-backs; interrupted turns are not eligible. The caller-turn handler passes the caller transcript into `observe_caller_turn`. Only exact affirmative phrases authorize the pending target and number, so ambiguous responses require another confirmation. The local CLI uses the same adapter and confirmation state and prompts interactively instead of providing a confirmation bypass.
+
+The pipeline has not been validated with live provider credentials in this development environment. The automated tests verify domain/tool/configuration/CLI behavior, not real audio quality, provider availability, or Gemini's conversational choices. The custom dashboard is also not implemented yet.
