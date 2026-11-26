@@ -231,12 +231,15 @@ Never silently fall back to hard-coded availability, mock a provider response af
 
 ## 9. Dashboard boundary
 
-The React dashboard consumes Pipecat session events and a read-only clinic snapshot from `GET /api/clinic`; it does not contain appointment rules or connect directly to the JSON file. Its current local-development version includes:
+The React dashboard consumes Pipecat session events and a read-only clinic snapshot from `GET /api/clinic`; it does not contain appointment rules or connect directly to the JSON file. Its calendar-first workspace includes:
 
-- Start and end browser voice calls using Pipecat's SmallWebRTC client.
-- Show connecting/connected/ended or failed call states and the live transcript.
-- List doctors, specialties, and currently available slots.
-- List appointments and refresh the snapshot while a call is active and after disconnect.
+- A Monday-first month grid with month navigation, a Today action, and a specialty filter.
+- Available slots, booked appointments, and cancelled appointment history shown on their clinic-local dates, with an integrated selected-day agenda.
+- A read-only event projection in the browser. A cancelled appointment and its reopened available slot remain separate records.
+- An on-demand voice drawer with SmallWebRTC call controls and the live transcript. Closing the drawer does not end an active call.
+- A prominent first-step call action, with guidance that distinguishes calendar browsing from voice-only availability, booking, and cancellation help. It starts a call directly or returns to an active call.
+- Loading, retry/error, empty-day, and empty-month states. The calendar never books or cancels an appointment.
+- Clinic-local date grouping and ordering by appointment start time. The initial selection is the nearest upcoming available slot or booked appointment, falling back to clinic-local today when there is no upcoming active event.
 
 The Pipecat runner hosts the read-only snapshot route beside `/start` and the WebRTC offer route under `/sessions/{session_id}/api/offer`; Vite proxies all three route prefixes during local development. The snapshot omits caller phone numbers. Booking and cancellation still happen only through the voice/tool/domain flow, not through dashboard write endpoints. This unauthenticated development API must not be exposed publicly; add authentication and authorization before any shared deployment.
 

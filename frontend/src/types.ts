@@ -27,6 +27,25 @@ export interface Appointment {
   createdAt: string;
 }
 
+interface CalendarEventBase {
+  id: string;
+  doctorId: string;
+  doctorName: string;
+  specialties: string[];
+  startsAt: string;
+  dateKey: string;
+}
+
+export type CalendarEvent =
+  | (CalendarEventBase & {
+      kind: "available";
+      status: "available";
+    })
+  | (CalendarEventBase & {
+      kind: "appointment";
+      status: "booked" | "cancelled";
+    });
+
 export interface ClinicSnapshot {
   timezone: string;
   specialties: Specialty[];
