@@ -130,8 +130,10 @@ class CallConfirmationState:
     def observe_caller_turn(self, transcript: str) -> bool:
         """Confirm only a clear affirmative turn after a tool requested confirmation."""
         with self._lock:
-            if self._pending is None or not self._prompt_presented:
+            if self._pending is None:
                 self._clear()
+                return False
+            if not self._prompt_presented:
                 return False
 
             normalized_turn = " ".join(

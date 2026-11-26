@@ -26,8 +26,9 @@ The browser is a caller and an observer of the session. Pipecat owns the real-ti
 ```mermaid
 flowchart LR
     Caller[Caller in browser]
-    UI[Dashboard - later client]
-    Transport[Browser-compatible audio transport]
+    UI[React dashboard]
+    DashboardAPI[Read-only clinic API]
+    Transport[SmallWebRTC audio transport]
     Session[Pipecat session and pipeline]
     VAD[Optional VAD]
     STT[ElevenLabs STT]
@@ -40,6 +41,8 @@ flowchart LR
 
     Caller <--> UI
     UI <--> Transport
+    UI <-->|Clinic JSON snapshot| DashboardAPI
+    DashboardAPI --> Repo
     Transport --> Session
     Session --> VAD
     VAD --> STT
@@ -52,7 +55,7 @@ flowchart LR
     LLM --> TTS
     TTS --> Session
     Session --> Transport
-    Session -. transcript, state, and tool events .-> UI
+    Session -. transcript and call state .-> UI
 ```
 
 VAD is an optional audio-processing stage, not a second conversation path. When it is disabled, audio proceeds directly to STT. The exact browser transport and Pipecat transport implementation can be selected when the application is scaffolded; keep audio transport concerns out of appointment logic.
@@ -108,7 +111,7 @@ The diagram omits repeated turns for brevity. A tool call may require more than 
 | 3 | STT and TTS adapters | Connect ElevenLabs STT/TTS to the pipeline; verify a caller turn can be transcribed and an agent response can be heard. |
 | 4 | Conversation context and LLM | Handle intent, collect missing details, select a doctor/specialty/slot from tool results, and request confirmation before mutations. |
 | 5 | Registered appointment tools | Connect the three required tools to domain services. Verify all three end-to-end and ensure failures never sound like success. |
-| 6 | Dashboard client | Add call controls, live transcript/status, doctors and slots, and appointments that refresh after tool results. React can be used here without coupling the backend to React. |
+| 6 | Dashboard client | Implemented as a thin React client with call controls, transcript/status, doctors, available slots, and refreshed appointment data. |
 | 7 | Optional improvements | Add bonus features through the extension seams below only after the required workflow is reliable. |
 
 Keep the data/domain tests and tool tests runnable without calling paid or network speech/LLM services. Add a small number of full integration checks with provider calls enabled only when credentials and network access are available.
@@ -130,6 +133,14 @@ Keep the data/domain tests and tool tests runnable without calling paid or netwo
 Use the Pipecat pipeline for streaming and turn orchestration. Keep provider-specific setup behind small adapters/configuration so a provider can later be swapped without rewriting tool or appointment rules.
 
 The initial implementation registers three direct Python function tools in Gemini's `LLMContext`. Each callback forwards only validated arguments to the provider-neutral `AppointmentToolAdapter`; the adapter remains the boundary for domain rules and structured results. A fresh repository service and confirmation state are created per browser call. Assistant-turn and caller-turn aggregator events connect delivered read-backs and caller transcripts to that state. Disconnect clears it.
+
+Each session also provides Gemini with the current date in the configured clinic timezone so relative dates such as “tomorrow” are grounded consistently. Runtime logs default to INFO because provider DEBUG logs may include complete conversation context and tool arguments containing personal data.
+
+### Cost control: silence during realtime STT
+
+The current pipeline sends WebRTC audio directly to ElevenLabs realtime STT. Silero VAD is used for turn aggregation and VAD-based transcript commits, but it does **not** gate upstream audio or pause the STT stream while the caller is silent. If realtime STT usage is metered by elapsed stream/audio duration, silent periods may still consume credits.
+
+Treat silence billing as a known cost risk to verify against the account's usage analytics during a controlled idle test. A follow-up should compare usage with and without silence, then consider VAD-gated audio forwarding or pausing/restarting STT after an idle timeout. Preserve audio pre-roll and resume behavior so the first words after a pause are not clipped, and verify billing before choosing the implementation.
 
 ## 6. Appointment tools and conversation rules
 
@@ -218,17 +229,16 @@ Fail explicitly and preserve data correctness. A fallback must never make an una
 
 Never silently fall back to hard-coded availability, mock a provider response after a live request fails, or mark a booking complete before the repository confirms it.
 
-## 9. Dashboard boundary (later milestone)
+## 9. Dashboard boundary
 
-The dashboard should consume session status/transcript events and appointment/doctor data; it should not contain appointment rules or connect directly to the JSON file. Its first required version needs:
+The React dashboard consumes Pipecat session events and a read-only clinic snapshot from `GET /api/clinic`; it does not contain appointment rules or connect directly to the JSON file. Its current local-development version includes:
 
-- Start and end browser voice calls.
-- Show connecting/connected/ended or failed call states.
-- Render a live transcript.
-- List doctors and their available slots.
-- List appointments and refresh/highlight them after a confirmed booking or cancellation.
+- Start and end browser voice calls using Pipecat's SmallWebRTC client.
+- Show connecting/connected/ended or failed call states and the live transcript.
+- List doctors, specialties, and currently available slots.
+- List appointments and refresh the snapshot while a call is active and after disconnect.
 
-React is a practical option for this UI, but the backend should expose framework-neutral session and data boundaries. Choose the exact API/event channel when wiring up the selected Pipecat transport; keep audio on a suitable real-time media transport and use a separate event/control channel if the transport requires one.
+The Pipecat runner hosts the read-only snapshot route beside `/start` and the WebRTC offer route under `/sessions/{session_id}/api/offer`; Vite proxies all three route prefixes during local development. The snapshot omits caller phone numbers. Booking and cancellation still happen only through the voice/tool/domain flow, not through dashboard write endpoints. This unauthenticated development API must not be exposed publicly; add authentication and authorization before any shared deployment.
 
 ## 10. Optional bonus extension seams
 

@@ -122,12 +122,25 @@ class AppointmentToolAdapterTests(unittest.TestCase):
 
     def test_affirmative_before_readback_is_not_confirmation(self) -> None:
         arguments = {"slot_id": "slot-201", "phone_number": PHONE_NUMBER}
-        self.adapter.execute("book_appointment", arguments)
+        pending = self.adapter.execute("book_appointment", arguments)
 
         self.assertFalse(self.adapter.observe_caller_turn("Yes."))
+        self.assertTrue(self.present_confirmation(pending))
         result = self.adapter.execute("book_appointment", arguments)
         self.assertEqual("confirmation_required", result["code"])
         self.assertFalse(self.state_path.exists())
+
+    def test_question_before_readback_preserves_pending_confirmation(self) -> None:
+        arguments = {"slot_id": "slot-201", "phone_number": PHONE_NUMBER}
+        pending = self.adapter.execute("book_appointment", arguments)
+
+        self.assertFalse(self.adapter.observe_caller_turn("Is it booked?"))
+        self.assertTrue(self.present_confirmation(pending))
+        self.assertTrue(self.adapter.observe_caller_turn("Yes."))
+
+        booked = self.adapter.execute("book_appointment", arguments)
+        self.assertTrue(booked["ok"])
+        self.assertEqual(1, len(self.service.list_appointments()))
 
     def test_phone_change_invalidates_confirmation(self) -> None:
         self.adapter.execute(

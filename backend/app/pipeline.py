@@ -1,4 +1,6 @@
+import sys
 from collections.abc import Awaitable, Callable
+from datetime import date, datetime
 
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -56,6 +58,20 @@ phone-number lookup key.
 Your spoken responses should be brief and natural. Do not expose internal IDs
 unless needed to resolve an appointment selection.
 """
+
+
+def build_system_instruction(clinic_date: date) -> str:
+    return (
+        f"{SYSTEM_INSTRUCTION}\n"
+        f"Current clinic-local date: {clinic_date.isoformat()}. Resolve relative "
+        "dates such as today and tomorrow from this date; do not infer a different "
+        "year. Pass dates to availability tools as YYYY-MM-DD."
+    )
+
+
+def configure_runtime_logging() -> None:
+    logger.remove()
+    logger.add(sys.stderr, level="INFO")
 
 
 def create_appointment_tools(
@@ -131,6 +147,7 @@ def create_appointment_tools(
 
 
 async def bot(runner_args: RunnerArguments) -> None:
+    configure_runtime_logging()
     if not isinstance(runner_args, SmallWebRTCRunnerArguments):
         raise ConfigurationError(
             "This development entry point currently supports the local WebRTC transport. "
@@ -167,7 +184,9 @@ async def bot(runner_args: RunnerArguments) -> None:
         api_key=settings.google_api_key,
         settings=GoogleLLMService.Settings(
             model=settings.gemini_model,
-            system_instruction=SYSTEM_INSTRUCTION,
+            system_instruction=build_system_instruction(
+                datetime.now(settings.clinic_timezone).date()
+            ),
         ),
     )
     tts = ElevenLabsTTSService(
@@ -235,6 +254,14 @@ async def bot(runner_args: RunnerArguments) -> None:
 
 
 if __name__ == "__main__":
-    from pipecat.runner.run import main
+    from pipecat.runner.run import app, main
+
+    settings = load_settings()
+    repository = JsonClinicRepository(settings.state_path, settings.seed_path)
+    from backend.app.dashboard_api import create_dashboard_router
+
+    app.include_router(
+        create_dashboard_router(repository, settings.clinic_timezone)
+    )
 
     main()

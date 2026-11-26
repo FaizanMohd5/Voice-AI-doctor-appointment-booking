@@ -1,7 +1,7 @@
 import asyncio
 import tempfile
 import unittest
-from datetime import timedelta, timezone
+from datetime import date, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +9,7 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 
 from backend.app.appointment_service import AppointmentService
 from backend.app.json_store import JsonClinicRepository
-from backend.app.pipeline import create_appointment_tools
+from backend.app.pipeline import build_system_instruction, create_appointment_tools
 from backend.app.tools import AppointmentToolAdapter, CallConfirmationState
 
 
@@ -25,6 +25,12 @@ class _FunctionCallParams:
 
 
 class PipelineToolRegistrationTests(unittest.TestCase):
+    def test_system_instruction_includes_clinic_local_date(self) -> None:
+        instruction = build_system_instruction(date(2026, 11, 25))
+
+        self.assertIn("Current clinic-local date: 2026-11-25.", instruction)
+        self.assertIn("Resolve relative dates such as today and tomorrow", instruction)
+
     def test_direct_functions_register_with_pipecat_and_return_adapter_results(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             repository = JsonClinicRepository(
